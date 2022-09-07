@@ -67,23 +67,33 @@ class AlertBot:
         JsonFile(self.datafile).write(data)
         return data
 
-    def _check_data(self, data, data_type):
-        """check data and return text and percent"""
-        _sum = 0
-        today = str(datetime.date.today())
-        num = data[data_type].get(today, 0)
-        text = f"\n- {today}: {num}\n"
+    def _check_data(self, data):
+        """check chain data and return text and percent"""
+        _block_sum = _trx_sum = 0
+        day = str(datetime.date.today())
+        _block_num = data["block"].get(day, 0)
+        _trx_num = data["trx"].get(day, 0)
+        text = f"date  blocks  trxs\n- {day}: {_block_num}, {_trx_num}\n"
         for i in range(-1, -8, -1):
-            key = str(datetime.date.today() + datetime.timedelta(days=i))
-            value = data[data_type].get(key, 0)
-            text += f"- {key}: {value}\n"
-            _sum += value
-        _avg = int(_sum / 7)
-        _percent = int(100 * num / _avg) if _avg != 0 else 0
-        text += (
-            f"{data_type} avg: {_avg} today: {num or '???'} {'!'*int(_percent/100) }\n"
-        )
-
+            day = str(datetime.date.today() + datetime.timedelta(days=i))
+            _bv = data["block"].get(day, 0)
+            _tv = data["trx"].get(day, 0)
+            text += f"- {day}: {_bv}, {_tv}\n"
+            _block_sum += _bv
+            _trx_sum += _tv
+        _block_avg = int(_block_sum / 7)
+        _trx_avg = int(_trx_sum / 7)
+        _block_percent = int(100 * _block_num / _block_avg) if _block_avg != 0 else 0
+        _trx_percent = int(100 * _trx_num / _trx_avg) if _trx_avg != 0 else 0
+        text += f"average: {_block_avg}, {_trx_avg}\npercent: {_block_percent }%, {_trx_percent}%\n"
+        if _block_percent > 200:
+            text += "✨ WARNING: today's block is too high!!! ✨\n"
+        elif _block_percent == 0:
+            text += "✨ WARNING: today's block is zero!!! ✨\n"
+        if _trx_percent > 200:
+            text += "✨ WARNING: today's trx is too high!!! ✨\n"
+        elif _trx_percent == 0:
+            text += "✨ WARNING: today's trx is zero!!! ✨\n"
         return text
 
     def check_sync(self, max_try=10):
@@ -118,22 +128,23 @@ class AlertBot:
     def check_data_and_init_text(self):
         """check data and alert"""
         data = JsonFile(self.datafile).read({})
-        block_text = self._check_data(data, "block")
-        trx_text = self._check_data(data, "trx")
-
         _bid = data["progress_block_id"]
         _dt = timestamp_to_datetime(self.rum.api.block(_bid)["TimeStamp"])
 
         info = self.rum.api.group_info()
         _now_hight = info.highest_height
         _to_hight = info.snapshot_info.get("HighestHeight", 0)
+        _flag = "to"
+        if _now_hight < _to_hight - 100:
+            _flag = "<<<"
+        elif _now_hight == _to_hight:
+            _flag = "=="
 
         text = (
             f"<{self.rum.group_id}>\n\n"
-            + block_text
-            + "\n"
-            + trx_text
-            + f"\nblock updated to: {_dt}\n<{_bid}>\nhight now {_now_hight} to {_to_hight}"
+            + self._check_data(data)
+            + f"\nblock updated to: {_dt}\n{_bid}\n"
+            + f"hight now {_now_hight} {_flag} snapshot {_to_hight}"
         )
 
         for i in [0, -1]:
@@ -146,6 +157,7 @@ class AlertBot:
         text = f"🥂{group_name}🥂\n{text}"
         packed = pack_text_data(text)
         for mid in to_mixin_ids:
+            print(datetime.datetime.now(), "send to", mid)
             cid = self.xin.get_conversation_id_with_user(mid)
             msg = pack_message(packed, conversation_id=cid)
             self.xin.api.send_messages(msg)
